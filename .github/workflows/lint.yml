@@ -1,0 +1,53 @@
+name: Lint
+
+on:
+  workflow_call:
+    inputs:
+      working_directory:
+        description: "Terraform root to lint. Ignored if working_directories is set."
+        type: string
+        default: "."
+      working_directories:
+        description: "JSON array of Terraform roots to lint as a matrix, e.g. '[\"common/ecr\",\"common/acm\"]'"
+        type: string
+        default: ""
+      terraform_version:
+        description: "Terraform version to install"
+        type: string
+        default: "1.7.x"
+
+jobs:
+  lint:
+    name: lint
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        working_directory: ${{ inputs.working_directories != '' && fromJson(inputs.working_directories) || fromJson(format('["{0}"]', inputs.working_directory)) }}
+    defaults:
+      run:
+        working-directory: ${{ matrix.working_directory }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ inputs.terraform_version }}
+
+      - name: terraform fmt
+        run: terraform fmt -check -recursive
+
+      # No AWS credentials anywhere in this job — -backend=false means init/validate
+      # never touch state, so lint is safe to run on PRs from forks.
+      - name: terraform init
+        run: terraform init -backend=false -input=false
+
+      - name: terraform validate
+        run: terraform validate -no-color
+
+      - uses: terraform-linters/setup-tflint@v4
+
+      - name: tflint
+        run: |
+          tflint --init
+          tflint -f compact

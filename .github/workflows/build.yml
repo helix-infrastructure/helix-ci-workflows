@@ -1,0 +1,96 @@
+name: Build
+
+on:
+  workflow_call:
+    inputs:
+      build_type:
+        description: "docker or lambda-zip"
+        type: string
+        required: true
+      working_directory:
+        type: string
+        default: "."
+      dockerfile_path:
+        description: "Path to the Dockerfile, relative to working_directory (build_type=docker only)"
+        type: string
+        default: "Dockerfile"
+      ecr_repository:
+        description: "ECR repository name (required for build_type=docker)"
+        type: string
+        default: ""
+      aws_region:
+        type: string
+        default: "eu-west-1"
+      image_tag:
+        description: "Tag to apply. Defaults to the short git SHA, per ci-cd.md."
+        type: string
+        default: ""
+    secrets:
+      AWS_ROLE_ARN:
+        description: "ECR-push-only OIDC role (build_type=docker only)"
+        required: false
+    outputs:
+      image_tag:
+        value: ${{ jobs.build.outputs.image_tag }}
+      image_digest:
+        value: ${{ jobs.build.outputs.image_digest }}
+
+jobs:
+  build:
+    name: build
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    outputs:
+      image_tag: ${{ steps.tag.outputs.value }}
+      image_digest: ${{ steps.push.outputs.digest }}
+    defaults:
+      run:
+        working-directory: ${{ inputs.working_directory }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve image tag
+        id: tag
+        run: |
+          if [ -n "${{ inputs.image_tag }}" ]; then
+            echo "value=${{ inputs.image_tag }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "value=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Configure AWS credentials
+        if: inputs.build_type == 'docker'
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ inputs.aws_region }}
+
+      - name: Login to ECR
+        if: inputs.build_type == 'docker'
+        id: ecr-login
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push image
+        if: inputs.build_type == 'docker'
+        id: push
+        env:
+          REGISTRY: ${{ steps.ecr-login.outputs.registry }}
+          REPOSITORY: ${{ inputs.ecr_repository }}
+          IMAGE_TAG: ${{ steps.tag.outputs.value }}
+        run: |
+          docker build -f "${{ inputs.dockerfile_path }}" -t "$REGISTRY/$REPOSITORY:$IMAGE_TAG" .
+          docker push "$REGISTRY/$REPOSITORY:$IMAGE_TAG"
+          echo "digest=$(docker inspect --format='{{index .RepoDigests 0}}' "$REGISTRY/$REPOSITORY:$IMAGE_TAG")" >> "$GITHUB_OUTPUT"
+
+      - name: Package Lambda zip
+        if: inputs.build_type == 'lambda-zip'
+        run: zip -r function.zip . -x '*.git*'
+
+      - name: Upload Lambda artifact
+        if: inputs.build_type == 'lambda-zip'
+        uses: actions/upload-artifact@v4
+        with:
+          name: lambda-function-${{ steps.tag.outputs.value }}
+          path: ${{ inputs.working_directory }}/function.zip

@@ -1,0 +1,38 @@
+name: Test
+
+on:
+  workflow_call:
+    inputs:
+      working_directory:
+        type: string
+        default: "."
+      setup_command:
+        type: string
+        default: "npm ci"
+      test_command:
+        type: string
+        default: "npm test"
+      runtime_version:
+        description: "Node version to set up"
+        type: string
+        default: "20"
+
+jobs:
+  test:
+    name: test
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ${{ inputs.working_directory }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.runtime_version }}
+
+      - name: Setup
+        run: ${{ inputs.setup_command }}
+
+      - name: Test
+        run: ${{ inputs.test_command }}

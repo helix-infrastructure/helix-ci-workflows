@@ -1,0 +1,22 @@
+# Copy into terraform-aws-*/.github/workflows/ci.yml.
+# Module repos have no state and no app code — lint + security only,
+# neither of which needs AWS credentials.
+
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  lint:
+    uses: helix-infrastructure/helix-ci-workflows/.github/workflows/lint.yml@v0.1.0
+    with:
+      working_directory: .
+
+  security:
+    uses: helix-infrastructure/helix-ci-workflows/.github/workflows/security.yml@v0.1.0
+    with:
+      scan_type: terraform
+      working_directory: .
