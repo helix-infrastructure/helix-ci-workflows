@@ -40,7 +40,7 @@ jobs:
 
       - name: Checkov
         if: contains(fromJson('["terraform","all"]'), inputs.scan_type)
-        uses: bridgecrewio/checkov-action@v12
+        uses: bridgecrewio/checkov-action@v12.3112.0
         with:
           directory: ${{ inputs.working_directory }}
           framework: terraform
@@ -51,7 +51,7 @@ jobs:
 
       - name: Trivy image scan
         if: contains(fromJson('["container","all"]'), inputs.scan_type) && inputs.image_ref != ''
-        uses: aquasecurity/trivy-action@0.24.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: ${{ inputs.image_ref }}
           exit-code: "1"
