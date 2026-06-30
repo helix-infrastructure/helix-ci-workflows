@@ -1,0 +1,109 @@
+name: Deploy
+
+on:
+  workflow_call:
+    inputs:
+      working_directory:
+        type: string
+        required: true
+      environment:
+        description: "Must match the GitHub Environment name — its required-reviewer rule is the actual approval gate for this job"
+        type: string
+        required: true
+      aws_region:
+        type: string
+        default: "eu-west-1"
+      terraform_version:
+        type: string
+        default: "1.7.x"
+    secrets:
+      AWS_STATE_ROLE_ARN:
+        required: true
+      AWS_DEPLOY_ROLE_ARN:
+        required: true
+    outputs:
+      deploy_status:
+        value: ${{ jobs.deploy.outputs.deploy_status }}
+
+jobs:
+  deploy:
+    name: deploy
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    permissions:
+      id-token: write
+      contents: write
+    outputs:
+      deploy_status: ${{ steps.apply.outcome }}
+    defaults:
+      run:
+        working-directory: ${{ inputs.working_directory }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ inputs.terraform_version }}
+
+      # Calling job must `needs: plan` in the same workflow run so this artifact
+      # name (keyed by github.run_id) resolves — see examples/tf-control-ci.yml.
+      - uses: actions/download-artifact@v4
+        with:
+          name: tfplan-${{ inputs.environment }}-${{ github.run_id }}
+          path: ${{ inputs.working_directory }}
+
+      - name: Assume state role
+        id: state-creds
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_STATE_ROLE_ARN }}
+          aws-region: ${{ inputs.aws_region }}
+          output-credentials: true
+
+      - name: Write state profile (helix-management-bootstrap)
+        env:
+          AWS_ACCESS_KEY_ID: ${{ steps.state-creds.outputs.aws-access-key-id }}
+          AWS_SECRET_ACCESS_KEY: ${{ steps.state-creds.outputs.aws-secret-access-key }}
+          AWS_SESSION_TOKEN: ${{ steps.state-creds.outputs.aws-session-token }}
+        run: |
+          aws configure set aws_access_key_id "$AWS_ACCESS_KEY_ID" --profile helix-management-bootstrap
+          aws configure set aws_secret_access_key "$AWS_SECRET_ACCESS_KEY" --profile helix-management-bootstrap
+          aws configure set aws_session_token "$AWS_SESSION_TOKEN" --profile helix-management-bootstrap
+
+      - name: Assume deploy role
+        id: deploy-creds
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ inputs.aws_region }}
+          output-credentials: true
+
+      - name: Write deploy profile (helix-${{ inputs.environment }}-bootstrap)
+        env:
+          AWS_ACCESS_KEY_ID: ${{ steps.deploy-creds.outputs.aws-access-key-id }}
+          AWS_SECRET_ACCESS_KEY: ${{ steps.deploy-creds.outputs.aws-secret-access-key }}
+          AWS_SESSION_TOKEN: ${{ steps.deploy-creds.outputs.aws-session-token }}
+        run: |
+          aws configure set aws_access_key_id "$AWS_ACCESS_KEY_ID" --profile "helix-${{ inputs.environment }}-bootstrap"
+          aws configure set aws_secret_access_key "$AWS_SECRET_ACCESS_KEY" --profile "helix-${{ inputs.environment }}-bootstrap"
+          aws configure set aws_session_token "$AWS_SESSION_TOKEN" --profile "helix-${{ inputs.environment }}-bootstrap"
+
+      - name: terraform init
+        run: terraform init -input=false
+
+      # Always applies the plan artifact from this run's plan job — never a fresh
+      # plan. This is what satisfies "no apply without a saved plan file".
+      - name: terraform apply
+        id: apply
+        run: terraform apply -input=false -auto-approve tfplan
+
+      - name: Move deployed-${{ inputs.environment }} tag
+        if: steps.apply.outcome == 'success'
+        env:
+          GIT_AUTHOR_NAME: helix-ci-bot
+          GIT_AUTHOR_EMAIL: ci@helix-infrastructure.co.uk
+          GIT_COMMITTER_NAME: helix-ci-bot
+          GIT_COMMITTER_EMAIL: ci@helix-infrastructure.co.uk
+        run: |
+          git tag -f "deployed-${{ inputs.environment }}" "${{ github.sha }}"
+          git push -f origin "deployed-${{ inputs.environment }}"

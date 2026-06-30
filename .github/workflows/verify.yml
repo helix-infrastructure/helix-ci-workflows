@@ -1,0 +1,85 @@
+name: Verify
+
+on:
+  workflow_call:
+    inputs:
+      health_check_url:
+        description: "Literal URL to check. Preferred — Helix scaffolds use predictable custom domains."
+        type: string
+        default: ""
+      terraform_output_key:
+        description: "Fallback: resolve the URL via `terraform output -raw <key>` if no literal URL is given"
+        type: string
+        default: ""
+      working_directory:
+        type: string
+        default: "."
+      expected_status:
+        type: number
+        default: 200
+      timeout_seconds:
+        type: number
+        default: 30
+      retries:
+        type: number
+        default: 5
+      aws_region:
+        type: string
+        default: "eu-west-1"
+    secrets:
+      AWS_STATE_ROLE_ARN:
+        description: "Read-only state access, only needed for the terraform_output_key fallback"
+        required: false
+
+jobs:
+  verify:
+    name: verify
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    defaults:
+      run:
+        working-directory: ${{ inputs.working_directory }}
+    steps:
+      - uses: actions/checkout@v4
+        if: inputs.health_check_url == '' && inputs.terraform_output_key != ''
+
+      - uses: hashicorp/setup-terraform@v3
+        if: inputs.health_check_url == '' && inputs.terraform_output_key != ''
+
+      - name: Assume state role
+        id: state-creds
+        if: inputs.health_check_url == '' && inputs.terraform_output_key != ''
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_STATE_ROLE_ARN }}
+          aws-region: ${{ inputs.aws_region }}
+          output-credentials: true
+
+      - name: Resolve URL from Terraform output
+        id: resolve
+        if: inputs.health_check_url == '' && inputs.terraform_output_key != ''
+        env:
+          AWS_ACCESS_KEY_ID: ${{ steps.state-creds.outputs.aws-access-key-id }}
+          AWS_SECRET_ACCESS_KEY: ${{ steps.state-creds.outputs.aws-secret-access-key }}
+          AWS_SESSION_TOKEN: ${{ steps.state-creds.outputs.aws-session-token }}
+        run: |
+          terraform init -input=false
+          echo "url=$(terraform output -raw "${{ inputs.terraform_output_key }}")" >> "$GITHUB_OUTPUT"
+
+      - name: Health check
+        env:
+          URL: ${{ inputs.health_check_url || steps.resolve.outputs.url }}
+        run: |
+          for i in $(seq 1 ${{ inputs.retries }}); do
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" --max-time ${{ inputs.timeout_seconds }} "$URL" || echo "000")
+            if [ "$STATUS" == "${{ inputs.expected_status }}" ]; then
+              echo "Healthy: $URL returned $STATUS"
+              exit 0
+            fi
+            echo "Attempt $i/${{ inputs.retries }}: got $STATUS, retrying in 10s..."
+            sleep 10
+          done
+          echo "Failed: $URL did not return ${{ inputs.expected_status }} after ${{ inputs.retries }} attempts"
+          exit 1

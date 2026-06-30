@@ -1,0 +1,88 @@
+# Copy into tf-control/.github/workflows/ci.yml.
+# tf-control is the only repo with Terraform backend state, so it's the only
+# repo that plans, deploys, verifies, notifies, and rolls back. lint+security
+# are the only pre-merge required checks — plan/deploy run post-merge, gated
+# by the `environment:` field's required-reviewer rule, not by a PR check
+# (making them pre-merge-required would be circular).
+#
+# Shown here for one scaffold (test/helix-status-test) as the worked example —
+# repeat the plan/deploy/verify/notify block per scaffold/environment that's
+# wired up. Matrix it once enough scaffolds are onboarded that the repetition
+# is worth collapsing.
+
+name: CI
+
+on:
+  pull_request:
+    paths: ["**/*.tf", "**/*.tfvars"]
+  push:
+    branches: [main]
+    paths: ["tf-control-helix/aws-accounts/test/helix-status-test/**"]
+  workflow_dispatch:
+    inputs:
+      rollback_environment:
+        description: "Environment to roll back (leave empty for a normal run)"
+        type: choice
+        options: [sandbox, dev, test, prod]
+        required: false
+
+jobs:
+  lint:
+    if: github.event_name == 'pull_request'
+    uses: helix-infrastructure/helix-ci-workflows/.github/workflows/lint.yml@v0.1.0
+    with:
+      working_directory: tf-control-helix/aws-accounts/test/helix-status-test
+
+  security:
+    if: github.event_name == 'pull_request'
+    uses: helix-infrastructure/helix-ci-workflows/.github/workflows/security.yml@v0.1.0
+    with:
+      scan_type: terraform
+      working_directory: tf-control-helix/aws-accounts/test/helix-status-test
+
+  plan:
+    if: github.event_name == 'push'
+    uses: helix-infrastructure/helix-ci-workflows/.github/workflows/plan.yml@v0.1.0
+    with:
+      working_directory: tf-control-helix/aws-accounts/test/helix-status-test
+      environment: test
+    secrets:
+      AWS_STATE_ROLE_ARN: ${{ secrets.TEST_AWS_STATE_ROLE_ARN }}
+      AWS_DEPLOY_ROLE_ARN: ${{ secrets.TEST_AWS_DEPLOY_ROLE_ARN }}
+
+  deploy:
+    if: github.event_name == 'push'
+    needs: plan
+    uses: helix-infrastructure/helix-ci-workflows/.github/workflows/deploy.yml@v0.1.0
+    with:
+      working_directory: tf-control-helix/aws-accounts/test/helix-status-test
+      environment: test
+    secrets:
+      AWS_STATE_ROLE_ARN: ${{ secrets.TEST_AWS_STATE_ROLE_ARN }}
+      AWS_DEPLOY_ROLE_ARN: ${{ secrets.TEST_AWS_DEPLOY_ROLE_ARN }}
+
+  verify:
+    if: github.event_name == 'push'
+    needs: deploy
+    uses: helix-infrastructure/helix-ci-workflows/.github/workflows/verify.yml@v0.1.0
+    with:
+      health_check_url: https://internal.status.helix-infrastructure.co.uk
+
+  notify:
+    if: always() && github.event_name == 'push'
+    needs: [deploy, verify]
+    uses: helix-infrastructure/helix-ci-workflows/.github/workflows/notify.yml@v0.1.0
+    with:
+      status: ${{ needs.verify.result == 'success' && 'success' || 'failure' }}
+      environment: test
+    secrets:
+      GOOGLE_CHAT_WEBHOOK_URL: ${{ secrets.GOOGLE_CHAT_WEBHOOK_URL }}
+      TEAMS_WEBHOOK_URL: ${{ secrets.TEAMS_WEBHOOK_URL }}
+
+  rollback:
+    if: github.event_name == 'workflow_dispatch' && inputs.rollback_environment != ''
+    uses: helix-infrastructure/helix-ci-workflows/.github/workflows/rollback.yml@v0.1.0
+    with:
+      environment: ${{ inputs.rollback_environment }}
+    secrets:
+      HELIX_BOT_PAT: ${{ secrets.HELIX_BOT_PAT }}

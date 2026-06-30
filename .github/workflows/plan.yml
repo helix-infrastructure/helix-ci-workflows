@@ -1,0 +1,106 @@
+name: Plan
+
+on:
+  workflow_call:
+    inputs:
+      working_directory:
+        description: "tf-control scaffold or common/ root to plan"
+        type: string
+        required: true
+      environment:
+        description: "Must match the GitHub Environment name (sandbox|dev|test|prod|management) — this is what gates deploy.yml via required reviewers"
+        type: string
+        required: true
+      aws_region:
+        type: string
+        default: "eu-west-1"
+      terraform_version:
+        type: string
+        default: "1.7.x"
+    secrets:
+      AWS_STATE_ROLE_ARN:
+        description: "Role in the management account — state bucket I/O"
+        required: true
+      AWS_DEPLOY_ROLE_ARN:
+        description: "Role in the target environment's account — resource provisioning"
+        required: true
+    outputs:
+      plan_exit_code:
+        value: ${{ jobs.plan.outputs.plan_exit_code }}
+
+jobs:
+  plan:
+    name: plan
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    outputs:
+      plan_exit_code: ${{ steps.plan.outcome }}
+    defaults:
+      run:
+        working-directory: ${{ inputs.working_directory }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ inputs.terraform_version }}
+
+      # Mirrors the local dev workflow exactly: backend.tf is hardcoded to profile
+      # "helix-management-bootstrap" for state I/O, versions.tf's provider reads
+      # var.aws_profile (e.g. "helix-test-bootstrap") for resources. Two roles,
+      # two named profiles, zero changes needed to any scaffold's .tf files.
+      - name: Assume state role
+        id: state-creds
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_STATE_ROLE_ARN }}
+          aws-region: ${{ inputs.aws_region }}
+          output-credentials: true
+
+      - name: Write state profile (helix-management-bootstrap)
+        env:
+          AWS_ACCESS_KEY_ID: ${{ steps.state-creds.outputs.aws-access-key-id }}
+          AWS_SECRET_ACCESS_KEY: ${{ steps.state-creds.outputs.aws-secret-access-key }}
+          AWS_SESSION_TOKEN: ${{ steps.state-creds.outputs.aws-session-token }}
+        run: |
+          aws configure set aws_access_key_id "$AWS_ACCESS_KEY_ID" --profile helix-management-bootstrap
+          aws configure set aws_secret_access_key "$AWS_SECRET_ACCESS_KEY" --profile helix-management-bootstrap
+          aws configure set aws_session_token "$AWS_SESSION_TOKEN" --profile helix-management-bootstrap
+
+      - name: Assume deploy role
+        id: deploy-creds
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ inputs.aws_region }}
+          output-credentials: true
+
+      - name: Write deploy profile (helix-${{ inputs.environment }}-bootstrap)
+        env:
+          AWS_ACCESS_KEY_ID: ${{ steps.deploy-creds.outputs.aws-access-key-id }}
+          AWS_SECRET_ACCESS_KEY: ${{ steps.deploy-creds.outputs.aws-secret-access-key }}
+          AWS_SESSION_TOKEN: ${{ steps.deploy-creds.outputs.aws-session-token }}
+        run: |
+          aws configure set aws_access_key_id "$AWS_ACCESS_KEY_ID" --profile "helix-${{ inputs.environment }}-bootstrap"
+          aws configure set aws_secret_access_key "$AWS_SECRET_ACCESS_KEY" --profile "helix-${{ inputs.environment }}-bootstrap"
+          aws configure set aws_session_token "$AWS_SESSION_TOKEN" --profile "helix-${{ inputs.environment }}-bootstrap"
+
+      - name: terraform init
+        run: terraform init -input=false
+
+      - name: terraform plan
+        id: plan
+        run: terraform plan -out=tfplan -input=false -no-color
+
+      - name: terraform show
+        run: terraform show -no-color tfplan | tee plan.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tfplan-${{ inputs.environment }}-${{ github.run_id }}
+          path: |
+            ${{ inputs.working_directory }}/tfplan
+            ${{ inputs.working_directory }}/plan.txt
+          retention-days: 7

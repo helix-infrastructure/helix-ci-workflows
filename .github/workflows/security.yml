@@ -1,0 +1,58 @@
+name: Security
+
+on:
+  workflow_call:
+    inputs:
+      scan_type:
+        description: "terraform | app | container | all"
+        type: string
+        default: "all"
+      working_directory:
+        type: string
+        default: "."
+      image_ref:
+        description: "Image ref to scan with trivy (required if scan_type includes container)"
+        type: string
+        default: ""
+
+jobs:
+  security:
+    name: security
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ${{ inputs.working_directory }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # Runs unconditionally regardless of scan_type — secret scanning is a hard
+      # rule (standards/security.md), never optional.
+      - name: Gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+
+      - name: tfsec
+        if: contains(fromJson('["terraform","all"]'), inputs.scan_type)
+        uses: aquasecurity/tfsec-action@v1.0.3
+        with:
+          working_directory: ${{ inputs.working_directory }}
+
+      - name: Checkov
+        if: contains(fromJson('["terraform","all"]'), inputs.scan_type)
+        uses: bridgecrewio/checkov-action@v12
+        with:
+          directory: ${{ inputs.working_directory }}
+          framework: terraform
+
+      - name: npm audit
+        if: contains(fromJson('["app","all"]'), inputs.scan_type)
+        run: npm audit --audit-level=high
+
+      - name: Trivy image scan
+        if: contains(fromJson('["container","all"]'), inputs.scan_type) && inputs.image_ref != ''
+        uses: aquasecurity/trivy-action@0.24.0
+        with:
+          image-ref: ${{ inputs.image_ref }}
+          exit-code: "1"
+          severity: "CRITICAL,HIGH"

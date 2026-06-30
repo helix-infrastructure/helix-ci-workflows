@@ -1,0 +1,61 @@
+name: Notify
+
+on:
+  workflow_call:
+    inputs:
+      status:
+        description: "success or failure"
+        type: string
+        required: true
+      environment:
+        type: string
+        default: ""
+      message:
+        description: "Overrides the default-composed message"
+        type: string
+        default: ""
+    secrets:
+      GOOGLE_CHAT_WEBHOOK_URL:
+        required: false
+      TEAMS_WEBHOOK_URL:
+        required: false
+
+jobs:
+  notify:
+    name: notify
+    runs-on: ubuntu-latest
+    steps:
+      - name: Compose message
+        id: compose
+        env:
+          MESSAGE: ${{ inputs.message }}
+        run: |
+          TEXT="$MESSAGE"
+          if [ -z "$TEXT" ]; then
+            TEXT="${{ github.repository }} — ${{ inputs.environment }} — ${{ inputs.status }} (${{ github.sha }})"
+          fi
+          {
+            echo "text<<NOTIFY_EOF"
+            echo "$TEXT"
+            echo "NOTIFY_EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Google Chat
+        if: ${{ secrets.GOOGLE_CHAT_WEBHOOK_URL != '' }}
+        env:
+          WEBHOOK_URL: ${{ secrets.GOOGLE_CHAT_WEBHOOK_URL }}
+          TEXT: ${{ steps.compose.outputs.text }}
+        run: |
+          curl -s -X POST -H "Content-Type: application/json" \
+            -d "$(jq -n --arg t "$TEXT" '{text: $t}')" \
+            "$WEBHOOK_URL"
+
+      - name: Teams
+        if: ${{ secrets.TEAMS_WEBHOOK_URL != '' }}
+        env:
+          WEBHOOK_URL: ${{ secrets.TEAMS_WEBHOOK_URL }}
+          TEXT: ${{ steps.compose.outputs.text }}
+        run: |
+          curl -s -X POST -H "Content-Type: application/json" \
+            -d "$(jq -n --arg t "$TEXT" '{text: $t}')" \
+            "$WEBHOOK_URL"

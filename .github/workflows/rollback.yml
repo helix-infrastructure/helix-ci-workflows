@@ -1,0 +1,66 @@
+name: Rollback
+
+# Never applies directly — opens a revert PR that goes through the same
+# lint/security checks, review, and Environment-gated deploy as any other
+# change. A special-cased rollback-apply path would be a second, less-reviewed
+# way to change prod; this design deliberately avoids that.
+
+on:
+  workflow_call:
+    inputs:
+      environment:
+        description: "Which deployed-{environment} tag to roll back to, if target_sha is not given"
+        type: string
+        required: true
+      target_sha:
+        description: "Explicit commit to roll back to. Defaults to the deployed-{environment} tag."
+        type: string
+        default: ""
+    secrets:
+      HELIX_BOT_PAT:
+        description: "Fine-grained PAT, pull-requests:write on this repo only"
+        required: true
+    outputs:
+      pr_url:
+        value: ${{ jobs.rollback.outputs.pr_url }}
+
+jobs:
+  rollback:
+    name: rollback
+    runs-on: ubuntu-latest
+    outputs:
+      pr_url: ${{ steps.pr.outputs.url }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.HELIX_BOT_PAT }}
+          fetch-depth: 0
+
+      - name: Resolve rollback target
+        id: target
+        run: |
+          if [ -n "${{ inputs.target_sha }}" ]; then
+            echo "sha=${{ inputs.target_sha }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "sha=$(git rev-parse "deployed-${{ inputs.environment }}")" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create revert branch and PR
+        id: pr
+        env:
+          GH_TOKEN: ${{ secrets.HELIX_BOT_PAT }}
+          GIT_AUTHOR_NAME: helix-ci-bot
+          GIT_AUTHOR_EMAIL: ci@helix-infrastructure.co.uk
+          GIT_COMMITTER_NAME: helix-ci-bot
+          GIT_COMMITTER_EMAIL: ci@helix-infrastructure.co.uk
+          TARGET_SHA: ${{ steps.target.outputs.sha }}
+        run: |
+          BRANCH="chore/rollback-${{ inputs.environment }}-$(date +%s)"
+          git checkout -b "$BRANCH"
+          git revert --no-edit "${TARGET_SHA}..HEAD"
+          git push origin "$BRANCH"
+          URL=$(gh pr create \
+            --title "Rollback ${{ inputs.environment }} to ${TARGET_SHA:0:7}" \
+            --body "Automated rollback opened by rollback.yml. Goes through the normal lint/security/review/deploy gate for ${{ inputs.environment }} — does not apply directly." \
+            --base main --head "$BRANCH")
+          echo "url=$URL" >> "$GITHUB_OUTPUT"
