@@ -1,0 +1,90 @@
+# Copy into helix-status/ or helix-api-*/.github/workflows/ci.yml.
+# App repos build + test + scan as PR/branch gates. They never plan or deploy —
+# tf-control is the only repo that applies infrastructure. On push to main, this
+# opens an automated PR against tf-control bumping the scaffold's image_tag;
+# that PR then goes through tf-control's own lint/security/review gate exactly
+# like a human-authored change.
+
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  detect-infra:
+    name: detect-infra
+    runs-on: ubuntu-latest
+    outputs:
+      has_infra: ${{ steps.check.outputs.has_infra }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: check
+        run: |
+          if [ -d "infra" ]; then
+            echo "has_infra=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_infra=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  # Job is always present in the graph (required-check name stays stable) but
+  # *skips* via if: when there's no infra/ to lint — an omitted job would leave
+  # a required check pending forever instead of reporting skipped/green.
+  lint:
+    name: lint
+    needs: detect-infra
+    if: needs.detect-infra.outputs.has_infra == 'true'
+    uses: helix-infrastructure/helix-ci-workflows/.github/workflows/lint.yml@v0.1.0
+    with:
+      working_directory: infra
+
+  build:
+    name: build
+    uses: helix-infrastructure/helix-ci-workflows/.github/workflows/build.yml@v0.1.0
+    with:
+      build_type: docker
+      ecr_repository: helix-status-test
+    secrets:
+      AWS_ROLE_ARN: ${{ secrets.AWS_ECR_PUSH_ROLE_ARN }}
+
+  test:
+    name: test
+    uses: helix-infrastructure/helix-ci-workflows/.github/workflows/test.yml@v0.1.0
+    with:
+      setup_command: npm ci
+      test_command: npm test
+
+  security:
+    name: security
+    uses: helix-infrastructure/helix-ci-workflows/.github/workflows/security.yml@v0.1.0
+    with:
+      scan_type: app
+
+  bump-tf-control:
+    name: bump-tf-control
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    needs: [build, test, security]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: helix-infrastructure/tf-control
+          token: ${{ secrets.HELIX_BOT_PAT }}
+      - env:
+          GH_TOKEN: ${{ secrets.HELIX_BOT_PAT }}
+          IMAGE_TAG: ${{ needs.build.outputs.image_tag }}
+          GIT_AUTHOR_NAME: helix-ci-bot
+          GIT_AUTHOR_EMAIL: ci@helix-infrastructure.co.uk
+          GIT_COMMITTER_NAME: helix-ci-bot
+          GIT_COMMITTER_EMAIL: ci@helix-infrastructure.co.uk
+        run: |
+          SCAFFOLD="tf-control-helix/aws-accounts/test/helix-status-test"
+          BRANCH="chore/bump-helix-status-test-${IMAGE_TAG}"
+          git checkout -b "$BRANCH"
+          sed -i "s/^image_tag.*/image_tag     = \"${IMAGE_TAG}\"/" "$SCAFFOLD/terraform.tfvars"
+          git commit -am "Bump helix-status-test image_tag to ${IMAGE_TAG}"
+          git push origin "$BRANCH"
+          gh pr create --title "Bump helix-status-test image_tag to ${IMAGE_TAG}" \
+            --body "Automated bump from helix-status build ${{ github.sha }}." \
+            --base main --head "$BRANCH"
