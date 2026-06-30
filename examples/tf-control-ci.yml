@@ -29,20 +29,23 @@ on:
 jobs:
   lint:
     if: github.event_name == 'pull_request'
-    uses: helix-infrastructure/helix-ci-workflows/.github/workflows/lint.yml@v0.1.0
+    uses: helix-infrastructure/helix-ci-workflows/.github/workflows/lint.yml@v0.1.1
     with:
       working_directory: tf-control-helix/aws-accounts/test/helix-status-test
 
   security:
     if: github.event_name == 'pull_request'
-    uses: helix-infrastructure/helix-ci-workflows/.github/workflows/security.yml@v0.1.0
+    permissions:
+      contents: read
+      pull-requests: write # gitleaks-action posts PR comments
+    uses: helix-infrastructure/helix-ci-workflows/.github/workflows/security.yml@v0.1.1
     with:
       scan_type: terraform
       working_directory: tf-control-helix/aws-accounts/test/helix-status-test
 
   plan:
     if: github.event_name == 'push'
-    uses: helix-infrastructure/helix-ci-workflows/.github/workflows/plan.yml@v0.1.0
+    uses: helix-infrastructure/helix-ci-workflows/.github/workflows/plan.yml@v0.1.1
     with:
       working_directory: tf-control-helix/aws-accounts/test/helix-status-test
       environment: test
@@ -53,7 +56,7 @@ jobs:
   deploy:
     if: github.event_name == 'push'
     needs: plan
-    uses: helix-infrastructure/helix-ci-workflows/.github/workflows/deploy.yml@v0.1.0
+    uses: helix-infrastructure/helix-ci-workflows/.github/workflows/deploy.yml@v0.1.1
     with:
       working_directory: tf-control-helix/aws-accounts/test/helix-status-test
       environment: test
@@ -64,14 +67,14 @@ jobs:
   verify:
     if: github.event_name == 'push'
     needs: deploy
-    uses: helix-infrastructure/helix-ci-workflows/.github/workflows/verify.yml@v0.1.0
+    uses: helix-infrastructure/helix-ci-workflows/.github/workflows/verify.yml@v0.1.1
     with:
       health_check_url: https://internal.status.helix-infrastructure.co.uk
 
   notify:
     if: always() && github.event_name == 'push'
     needs: [deploy, verify]
-    uses: helix-infrastructure/helix-ci-workflows/.github/workflows/notify.yml@v0.1.0
+    uses: helix-infrastructure/helix-ci-workflows/.github/workflows/notify.yml@v0.1.1
     with:
       status: ${{ needs.verify.result == 'success' && 'success' || 'failure' }}
       environment: test
@@ -81,7 +84,7 @@ jobs:
 
   rollback:
     if: github.event_name == 'workflow_dispatch' && inputs.rollback_environment != ''
-    uses: helix-infrastructure/helix-ci-workflows/.github/workflows/rollback.yml@v0.1.0
+    uses: helix-infrastructure/helix-ci-workflows/.github/workflows/rollback.yml@v0.1.1
     with:
       environment: ${{ inputs.rollback_environment }}
     secrets:

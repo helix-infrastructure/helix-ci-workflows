@@ -19,6 +19,13 @@ jobs:
   security:
     name: security
     runs-on: ubuntu-latest
+    # gitleaks-action posts PR comments/check annotations, which needs
+    # pull-requests: write — the caller's job must grant at least this much
+    # (a reusable workflow's permissions can only be narrowed by the caller,
+    # never widened beyond what the caller itself has).
+    permissions:
+      contents: read
+      pull-requests: write
     defaults:
       run:
         working-directory: ${{ inputs.working_directory }}
