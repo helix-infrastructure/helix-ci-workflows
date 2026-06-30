@@ -30,7 +30,11 @@ jobs:
       run:
         working-directory: ${{ inputs.working_directory }}
     steps:
+      # fetch-depth: 0 — gitleaks scans full git history, not just the working
+      # tree; the default shallow clone makes its git-log scan fail outright.
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       # Runs unconditionally regardless of scan_type — secret scanning is a hard
       # rule (standards/security.md), never optional.
