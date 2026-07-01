@@ -16,6 +16,8 @@ Versioned exactly like a Terraform module (see `helix-ai-context/teams/devops/co
 
 `tf-control` is the only repo with Terraform backend state, so it's the only repo that actually plans, deploys, verifies, or rolls back — both infra changes and app deploys (image-tag bumps) are controlled from there.
 
+**`terraform.tfvars` is gitignored repo-wide in `tf-control`** (it can carry account-scoped values — see `tf-control`'s `.gitignore`), so a bump step can never target it: git will never see the diff, and neither the bump-PR nor the `push`-triggered deploy can fire. Deploy-time parameters that CI needs to change (`image_tag` today) live in their own git-tracked `image_tag.auto.tfvars.json` per scaffold instead — Terraform loads `*.auto.tfvars.json` automatically alongside `terraform.tfvars`, no `.tf` code changes needed. The bump-PR step in `examples/app-repo-ci.yml` writes to this file, not `terraform.tfvars`.
+
 ## Secrets and GitHub Environments
 
 | Secret | Where | Used by |

@@ -85,7 +85,10 @@ jobs:
           SCAFFOLD="tf-control-helix/aws-accounts/test/helix-status-test"
           BRANCH="chore/bump-helix-status-test-${IMAGE_TAG}"
           git checkout -b "$BRANCH"
-          sed -i "s/^image_tag.*/image_tag     = \"${IMAGE_TAG}\"/" "$SCAFFOLD/terraform.tfvars"
+          # terraform.tfvars is gitignored repo-wide (can carry account-scoped
+          # values) — image_tag lives in its own git-tracked *.auto.tfvars.json
+          # instead, which Terraform loads automatically alongside it.
+          printf '{\n  "image_tag": "%s"\n}\n' "$IMAGE_TAG" > "$SCAFFOLD/image_tag.auto.tfvars.json"
           git commit -am "Bump helix-status-test image_tag to ${IMAGE_TAG}"
           git push origin "$BRANCH"
           gh pr create --title "Bump helix-status-test image_tag to ${IMAGE_TAG}" \
