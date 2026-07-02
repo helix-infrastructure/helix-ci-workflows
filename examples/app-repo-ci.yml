@@ -35,22 +35,25 @@ jobs:
     name: lint
     needs: detect-infra
     if: needs.detect-infra.outputs.has_infra == 'true'
-    uses: helix-infrastructure/helix-ci-workflows/.github/workflows/lint.yml@v0.1.1
+    uses: helix-infrastructure/helix-ci-workflows/.github/workflows/lint.yml@v0.1.4
     with:
       working_directory: infra
 
   build:
     name: build
-    uses: helix-infrastructure/helix-ci-workflows/.github/workflows/build.yml@v0.1.1
+    uses: helix-infrastructure/helix-ci-workflows/.github/workflows/build.yml@v0.1.4
     with:
       build_type: docker
-      ecr_repository: helix-status-test
+      # Confirm the real repo name with `aws ecr describe-repositories` before
+      # copying this for a different app — it does not always match the app repo
+      # name (helix-status's own ECR repo is helix-status-page-test, for example).
+      ecr_repository: helix-status-page-test
     secrets:
       AWS_ROLE_ARN: ${{ secrets.AWS_ECR_PUSH_ROLE_ARN }}
 
   test:
     name: test
-    uses: helix-infrastructure/helix-ci-workflows/.github/workflows/test.yml@v0.1.1
+    uses: helix-infrastructure/helix-ci-workflows/.github/workflows/test.yml@v0.1.4
     with:
       setup_command: npm ci
       test_command: npm test
@@ -60,7 +63,7 @@ jobs:
     permissions:
       contents: read
       pull-requests: write # gitleaks-action posts PR comments
-    uses: helix-infrastructure/helix-ci-workflows/.github/workflows/security.yml@v0.1.1
+    uses: helix-infrastructure/helix-ci-workflows/.github/workflows/security.yml@v0.1.4
     with:
       scan_type: app
 
