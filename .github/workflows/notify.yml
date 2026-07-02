@@ -40,22 +40,36 @@ jobs:
             echo "NOTIFY_EOF"
           } >> "$GITHUB_OUTPUT"
 
+      # Unconditional at the step level, not `if: secrets.X != ''` — the
+      # secrets context isn't permitted in step if: conditionals at all (a
+      # hard workflow-parse error: the whole run fails at startup with zero
+      # jobs created, for every job in the file, not just this one). The
+      # "is this webhook configured" check has to live inside the shell
+      # script instead — and unlike the git-config case elsewhere, curl
+      # given an empty URL is a real failure, not a harmless no-op, so this
+      # one needs an actual guard rather than just tolerating the empty value.
       - name: Google Chat
-        if: ${{ secrets.GOOGLE_CHAT_WEBHOOK_URL != '' }}
         env:
           WEBHOOK_URL: ${{ secrets.GOOGLE_CHAT_WEBHOOK_URL }}
           TEXT: ${{ steps.compose.outputs.text }}
         run: |
+          if [ -z "$WEBHOOK_URL" ]; then
+            echo "GOOGLE_CHAT_WEBHOOK_URL not set, skipping"
+            exit 0
+          fi
           curl -s -X POST -H "Content-Type: application/json" \
             -d "$(jq -n --arg t "$TEXT" '{text: $t}')" \
             "$WEBHOOK_URL"
 
       - name: Teams
-        if: ${{ secrets.TEAMS_WEBHOOK_URL != '' }}
         env:
           WEBHOOK_URL: ${{ secrets.TEAMS_WEBHOOK_URL }}
           TEXT: ${{ steps.compose.outputs.text }}
         run: |
+          if [ -z "$WEBHOOK_URL" ]; then
+            echo "TEAMS_WEBHOOK_URL not set, skipping"
+            exit 0
+          fi
           curl -s -X POST -H "Content-Type: application/json" \
             -d "$(jq -n --arg t "$TEXT" '{text: $t}')" \
             "$WEBHOOK_URL"
