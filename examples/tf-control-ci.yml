@@ -1,51 +1,57 @@
 # Copy into tf-control/.github/workflows/ci.yml.
 # tf-control is the only repo with Terraform backend state, so it's the only
 # repo that plans, applies, tests the endpoint, notifies, and rolls back.
-# lint-tf+security-tf are the only pre-merge required checks — plan-tf/apply-tf
-# run post-merge, gated by the `environment:` field's required-reviewer rule,
-# not by a PR check (making them pre-merge-required would be circular).
+# lint-tf+security-tf are the only pre-merge required checks.
 #
 # plan-tf and apply-tf stay separate jobs with an artifact handoff between them
-# — not collapsed into one job — specifically so the saved plan is reviewable
-# and the Environment's required-reviewer gate sits between "here's what would
-# change" and "make it happen". That's the whole point of never applying
-# without a saved, reviewed plan file.
+# — not collapsed into one job — specifically so the saved plan is reviewable.
+# That's the whole point of never applying without a saved, reviewed plan
+# file, even without a human approval gate in front of apply-tf (see below).
 #
-# environment: is set on the plan-tf/apply-tf calling jobs (not just inside
-# plan-tf.yml/apply-tf.yml's own job) because GitHub only resolves an
-# Environment's secrets and protection rules for a reusable-workflow call if
-# the *calling* job itself declares that environment — see
-# https://docs.github.com/actions/using-workflows/reusing-workflows#using-environments-with-reusable-workflows
+# IMPORTANT — no job here sets a job-level `environment:` key, and that's
+# deliberate, not an oversight. GitHub Environment protection rules (the
+# required-reviewer gate) aren't available on private repos on Free-tier
+# orgs, and confirmed by direct testing: setting `environment:` on a job that
+# also has `uses:` (a reusable-workflow-call job) breaks GitHub's ability to
+# recognize it as that job type at all — regardless of whether `with:`
+# contains a literal or a computed value. It demands `runs-on`/`steps:`
+# instead and the whole file fails at startup with zero jobs created. There
+# is no known workaround short of making this repo public (unlocks
+# Environment features) or upgrading the org's plan. Given tf-control holds
+# real Terraform (IAM policies, security groups, account structure), public
+# was rejected — AWS_STATE_ROLE_ARN/AWS_DEPLOY_ROLE_ARN are repo-level
+# secrets instead, and there is currently no human-approval gate before
+# apply-tf runs. This is a real, deliberate gap, not a mistake — revisit
+# before ever standing up prod/, which Helix's own guardrails already say
+# not to do yet regardless. `environment:` as a plain string (not the GH
+# Environment key) is still passed in `with:` — plan-tf.yml/apply-tf.yml use
+# it only to pick the right `helix-{env}-bootstrap` AWS profile, unrelated to
+# GitHub's Environment feature.
 #
 # permissions: blocks on plan-tf/apply-tf/test-endpoint are required, not
 # optional — those reusable workflows request id-token:write (AWS OIDC) and
 # apply-tf also contents:write (the deployed-{environment} tag push) in their
 # own job, but a reusable workflow can only receive permissions its caller
-# already has. Omitting this isn't a runtime permission error, it's a hard
-# schema validation failure that fails the entire file at startup with zero
-# jobs created — this cost real time to track down, don't drop it when
+# already has. Omitting this is a separate hard schema validation failure
+# (zero jobs created) from the environment: issue above — don't drop it when
 # copying this template.
-#
-# Shown here for one scaffold (test/helix-status-test) as the worked example —
-# repeat the plan-tf/apply-tf/test-endpoint/notify block per scaffold/
-# environment that's wired up. Matrix it once enough scaffolds are onboarded
-# that the repetition is worth collapsing.
 #
 # workflow_dispatch's target input lets you plan/apply on demand — e.g.
 # redeploy an app with no code changes, or apply a common/ infra root that
 # has no push-path trigger of its own — without needing a real .tf diff to
 # push. The resolve job turns either trigger (a push, whose target is implied
-# by the path filter above, or a manual dispatch with an explicit choice)
+# by the path filter below, or a manual dispatch with an explicit choice)
 # into one working_directory/health_check_url pair that plan-tf/apply-tf/
 # test-endpoint all key off — add a case per root to resolve's script as more
-# get onboarded, same place either way.
+# get onboarded, same place either way. This dynamic-value approach only
+# works because none of plan-tf/apply-tf/test-endpoint carry a job-level
+# environment: key (see above) — reintroducing environment: on any of them
+# will silently break this again.
 #
 # Terraform is inherently directory-scoped — each root (app or common/) has
 # its own state file and its own .tf files, so `terraform apply` from one
 # working_directory can only ever touch what's declared there. There is no
-# "apply everything in the repo" operation to accidentally trigger; the
-# target selection here is about which one root to run against, not a safety
-# rail against a blast radius that couldn't happen anyway.
+# "apply everything in the repo" operation to accidentally trigger.
 #
 # common/ roots (ACM, ECR, ECS cluster, etc.) have no meaningful single
 # health-check endpoint — resolve leaves health_check_url empty for those,
@@ -123,7 +129,6 @@ jobs:
 
   plan-tf:
     needs: resolve
-    environment: test
     permissions:
       id-token: write
       contents: read
@@ -138,7 +143,6 @@ jobs:
 
   apply-tf:
     needs: [resolve, plan-tf]
-    environment: test
     permissions:
       id-token: write
       contents: write
@@ -166,9 +170,6 @@ jobs:
   notify:
     # test-endpoint being skipped (a common/ target with no health check) is
     # not itself a failure — fall back to apply-tf's result in that case.
-    # Written with explicit parens: GHA's && binds tighter than ||, same as
-    # most languages, but this is exactly the kind of expression that's
-    # cheap to get subtly wrong and expensive to debug in CI.
     if: always() && needs.resolve.result == 'success'
     needs: [resolve, apply-tf, test-endpoint]
     uses: helix-infrastructure/helix-ci-workflows/.github/workflows/notify.yml@v1.0.0
