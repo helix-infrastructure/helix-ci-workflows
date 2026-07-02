@@ -38,6 +38,8 @@ jobs:
     uses: helix-infrastructure/helix-ci-workflows/.github/workflows/lint.yml@v0.1.4
     with:
       working_directory: infra
+    secrets:
+      TF_MODULE_READ_PAT: ${{ secrets.TF_MODULE_READ_PAT }}
 
   build:
     name: build
