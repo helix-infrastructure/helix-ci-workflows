@@ -1,20 +1,35 @@
 # Copy into tf-control/.github/workflows/ci.yml.
 # tf-control is the only repo with Terraform backend state, so it's the only
-# repo that plans, deploys, verifies, notifies, and rolls back. lint+security
-# are the only pre-merge required checks — plan/deploy run post-merge, gated
-# by the `environment:` field's required-reviewer rule, not by a PR check
-# (making them pre-merge-required would be circular).
+# repo that plans, applies, tests the endpoint, notifies, and rolls back.
+# lint-tf+security-tf are the only pre-merge required checks — plan-tf/apply-tf
+# run post-merge, gated by the `environment:` field's required-reviewer rule,
+# not by a PR check (making them pre-merge-required would be circular).
 #
-# environment: is set on the plan/deploy calling jobs (not just inside
-# plan.yml/deploy.yml's own job) because GitHub only resolves an Environment's
-# secrets and protection rules for a reusable-workflow call if the *calling*
-# job itself declares that environment — see
+# plan-tf and apply-tf stay separate jobs with an artifact handoff between them
+# — not collapsed into one job — specifically so the saved plan is reviewable
+# and the Environment's required-reviewer gate sits between "here's what would
+# change" and "make it happen". That's the whole point of never applying
+# without a saved, reviewed plan file.
+#
+# environment: is set on the plan-tf/apply-tf calling jobs (not just inside
+# plan-tf.yml/apply-tf.yml's own job) because GitHub only resolves an
+# Environment's secrets and protection rules for a reusable-workflow call if
+# the *calling* job itself declares that environment — see
 # https://docs.github.com/actions/using-workflows/reusing-workflows#using-environments-with-reusable-workflows
 #
+# permissions: blocks on plan-tf/apply-tf/test-endpoint are required, not
+# optional — those reusable workflows request id-token:write (AWS OIDC) and
+# apply-tf also contents:write (the deployed-{environment} tag push) in their
+# own job, but a reusable workflow can only receive permissions its caller
+# already has. Omitting this isn't a runtime permission error, it's a hard
+# schema validation failure that fails the entire file at startup with zero
+# jobs created — this cost real time to track down, don't drop it when
+# copying this template.
+#
 # Shown here for one scaffold (test/helix-status-test) as the worked example —
-# repeat the plan/deploy/verify/notify block per scaffold/environment that's
-# wired up. Matrix it once enough scaffolds are onboarded that the repetition
-# is worth collapsing.
+# repeat the plan-tf/apply-tf/test-endpoint/notify block per scaffold/
+# environment that's wired up. Matrix it once enough scaffolds are onboarded
+# that the repetition is worth collapsing.
 
 name: CI
 
@@ -33,26 +48,31 @@ on:
         required: false
 
 jobs:
-  lint:
+  lint-tf:
     if: github.event_name == 'pull_request'
-    uses: helix-infrastructure/helix-ci-workflows/.github/workflows/lint.yml@v0.2.1
+    uses: helix-infrastructure/helix-ci-workflows/.github/workflows/lint-tf.yml@v1.0.0
     with:
       working_directory: tf-control-helix/aws-accounts/test/helix-status-test
+    secrets:
+      TF_MODULE_READ_PAT: ${{ secrets.TF_MODULE_READ_PAT }}
 
-  security:
+  security-tf:
     if: github.event_name == 'pull_request'
     permissions:
       contents: read
       pull-requests: write # gitleaks-action posts PR comments
-    uses: helix-infrastructure/helix-ci-workflows/.github/workflows/security.yml@v0.2.1
+    uses: helix-infrastructure/helix-ci-workflows/.github/workflows/security.yml@v1.0.0
     with:
       scan_type: terraform
       working_directory: tf-control-helix/aws-accounts/test/helix-status-test
 
-  plan:
+  plan-tf:
     if: github.event_name == 'push'
     environment: test
-    uses: helix-infrastructure/helix-ci-workflows/.github/workflows/plan.yml@v0.2.1
+    permissions:
+      id-token: write
+      contents: read
+    uses: helix-infrastructure/helix-ci-workflows/.github/workflows/plan-tf.yml@v1.0.0
     with:
       working_directory: tf-control-helix/aws-accounts/test/helix-status-test
       environment: test
@@ -61,11 +81,14 @@ jobs:
       AWS_DEPLOY_ROLE_ARN: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
       TF_MODULE_READ_PAT: ${{ secrets.TF_MODULE_READ_PAT }}
 
-  deploy:
+  apply-tf:
     if: github.event_name == 'push'
-    needs: plan
+    needs: plan-tf
     environment: test
-    uses: helix-infrastructure/helix-ci-workflows/.github/workflows/deploy.yml@v0.2.1
+    permissions:
+      id-token: write
+      contents: write
+    uses: helix-infrastructure/helix-ci-workflows/.github/workflows/apply-tf.yml@v1.0.0
     with:
       working_directory: tf-control-helix/aws-accounts/test/helix-status-test
       environment: test
@@ -74,19 +97,22 @@ jobs:
       AWS_DEPLOY_ROLE_ARN: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
       TF_MODULE_READ_PAT: ${{ secrets.TF_MODULE_READ_PAT }}
 
-  verify:
+  test-endpoint:
     if: github.event_name == 'push'
-    needs: deploy
-    uses: helix-infrastructure/helix-ci-workflows/.github/workflows/verify.yml@v0.2.1
+    needs: apply-tf
+    permissions:
+      id-token: write
+      contents: read
+    uses: helix-infrastructure/helix-ci-workflows/.github/workflows/test-endpoint.yml@v1.0.0
     with:
       health_check_url: https://internal.status.helix-infrastructure.co.uk
 
   notify:
     if: always() && github.event_name == 'push'
-    needs: [deploy, verify]
-    uses: helix-infrastructure/helix-ci-workflows/.github/workflows/notify.yml@v0.2.1
+    needs: [apply-tf, test-endpoint]
+    uses: helix-infrastructure/helix-ci-workflows/.github/workflows/notify.yml@v1.0.0
     with:
-      status: ${{ needs.verify.result == 'success' && 'success' || 'failure' }}
+      status: ${{ needs.test-endpoint.result == 'success' && 'success' || 'failure' }}
       environment: test
     secrets:
       GOOGLE_CHAT_WEBHOOK_URL: ${{ secrets.GOOGLE_CHAT_WEBHOOK_URL }}
@@ -94,7 +120,7 @@ jobs:
 
   rollback:
     if: github.event_name == 'workflow_dispatch' && inputs.rollback_environment != ''
-    uses: helix-infrastructure/helix-ci-workflows/.github/workflows/rollback.yml@v0.2.1
+    uses: helix-infrastructure/helix-ci-workflows/.github/workflows/rollback.yml@v1.0.0
     with:
       environment: ${{ inputs.rollback_environment }}
     secrets:
