@@ -30,6 +30,27 @@
 # repeat the plan-tf/apply-tf/test-endpoint/notify block per scaffold/
 # environment that's wired up. Matrix it once enough scaffolds are onboarded
 # that the repetition is worth collapsing.
+#
+# workflow_dispatch's target input lets you plan/apply on demand — e.g.
+# redeploy an app with no code changes, or apply a common/ infra root that
+# has no push-path trigger of its own — without needing a real .tf diff to
+# push. The resolve job turns either trigger (a push, whose target is implied
+# by the path filter above, or a manual dispatch with an explicit choice)
+# into one working_directory/health_check_url pair that plan-tf/apply-tf/
+# test-endpoint all key off — add a case per root to resolve's script as more
+# get onboarded, same place either way.
+#
+# Terraform is inherently directory-scoped — each root (app or common/) has
+# its own state file and its own .tf files, so `terraform apply` from one
+# working_directory can only ever touch what's declared there. There is no
+# "apply everything in the repo" operation to accidentally trigger; the
+# target selection here is about which one root to run against, not a safety
+# rail against a blast radius that couldn't happen anyway.
+#
+# common/ roots (ACM, ECR, ECS cluster, etc.) have no meaningful single
+# health-check endpoint — resolve leaves health_check_url empty for those,
+# and test-endpoint/notify skip accordingly rather than erroring on a curl
+# to an empty URL.
 
 name: CI
 
@@ -41,6 +62,20 @@ on:
     paths: ["tf-control-helix/aws-accounts/test/helix-status-test/**"]
   workflow_dispatch:
     inputs:
+      target:
+        description: "Root to plan/apply — an app (redeploy with no code changes) or a common/ infra root. Leave empty for a rollback-only dispatch (use rollback_environment below instead)."
+        type: choice
+        options:
+          - ""
+          - helix-status-test
+          - common/acm
+          - common/alerting
+          - common/bastion
+          - common/ecr
+          - common/ecs-cluster
+          - common/ecs-task
+          - common/monitoring
+        default: ""
       rollback_environment:
         description: "Environment to roll back (leave empty for a normal run)"
         type: choice
@@ -66,15 +101,35 @@ jobs:
       scan_type: terraform
       working_directory: tf-control-helix/aws-accounts/test/helix-status-test
 
+  # Downstream jobs key off resolve's outputs, not their own if: — a job with
+  # a skipped `needs:` dependency is skipped automatically, so this is the
+  # only place the push-vs-dispatch-vs-neither condition needs to be written.
+  resolve:
+    if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.target != '')
+    runs-on: ubuntu-latest
+    outputs:
+      working_directory: ${{ steps.set.outputs.working_directory }}
+      health_check_url: ${{ steps.set.outputs.health_check_url }}
+    steps:
+      - id: set
+        run: |
+          TARGET="${{ inputs.target || 'helix-status-test' }}"
+          echo "working_directory=tf-control-helix/aws-accounts/test/${TARGET}" >> "$GITHUB_OUTPUT"
+          case "$TARGET" in
+            helix-status-test) echo "health_check_url=https://internal.status.helix-infrastructure.co.uk" >> "$GITHUB_OUTPUT" ;;
+            # common/* roots: no single health-check endpoint, leave empty —
+            # test-endpoint and notify both skip when this output is unset.
+          esac
+
   plan-tf:
-    if: github.event_name == 'push'
+    needs: resolve
     environment: test
     permissions:
       id-token: write
       contents: read
     uses: helix-infrastructure/helix-ci-workflows/.github/workflows/plan-tf.yml@v1.0.0
     with:
-      working_directory: tf-control-helix/aws-accounts/test/helix-status-test
+      working_directory: ${{ needs.resolve.outputs.working_directory }}
       environment: test
     secrets:
       AWS_STATE_ROLE_ARN: ${{ secrets.AWS_STATE_ROLE_ARN }}
@@ -82,37 +137,43 @@ jobs:
       TF_MODULE_READ_PAT: ${{ secrets.TF_MODULE_READ_PAT }}
 
   apply-tf:
-    if: github.event_name == 'push'
-    needs: plan-tf
+    needs: [resolve, plan-tf]
     environment: test
     permissions:
       id-token: write
       contents: write
     uses: helix-infrastructure/helix-ci-workflows/.github/workflows/apply-tf.yml@v1.0.0
     with:
-      working_directory: tf-control-helix/aws-accounts/test/helix-status-test
+      working_directory: ${{ needs.resolve.outputs.working_directory }}
       environment: test
     secrets:
       AWS_STATE_ROLE_ARN: ${{ secrets.AWS_STATE_ROLE_ARN }}
       AWS_DEPLOY_ROLE_ARN: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
       TF_MODULE_READ_PAT: ${{ secrets.TF_MODULE_READ_PAT }}
 
+  # Skips for common/ targets — no single meaningful health-check endpoint,
+  # see resolve above.
   test-endpoint:
-    if: github.event_name == 'push'
-    needs: apply-tf
+    if: needs.resolve.outputs.health_check_url != ''
+    needs: [resolve, apply-tf]
     permissions:
       id-token: write
       contents: read
     uses: helix-infrastructure/helix-ci-workflows/.github/workflows/test-endpoint.yml@v1.0.0
     with:
-      health_check_url: https://internal.status.helix-infrastructure.co.uk
+      health_check_url: ${{ needs.resolve.outputs.health_check_url }}
 
   notify:
-    if: always() && github.event_name == 'push'
-    needs: [apply-tf, test-endpoint]
+    # test-endpoint being skipped (a common/ target with no health check) is
+    # not itself a failure — fall back to apply-tf's result in that case.
+    # Written with explicit parens: GHA's && binds tighter than ||, same as
+    # most languages, but this is exactly the kind of expression that's
+    # cheap to get subtly wrong and expensive to debug in CI.
+    if: always() && needs.resolve.result == 'success'
+    needs: [resolve, apply-tf, test-endpoint]
     uses: helix-infrastructure/helix-ci-workflows/.github/workflows/notify.yml@v1.0.0
     with:
-      status: ${{ needs.test-endpoint.result == 'success' && 'success' || 'failure' }}
+      status: ${{ ((needs.test-endpoint.result == 'skipped' && needs.apply-tf.result == 'success') || needs.test-endpoint.result == 'success') && 'success' || 'failure' }}
       environment: test
     secrets:
       GOOGLE_CHAT_WEBHOOK_URL: ${{ secrets.GOOGLE_CHAT_WEBHOOK_URL }}
