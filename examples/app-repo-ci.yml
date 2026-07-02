@@ -35,7 +35,7 @@ jobs:
     name: lint
     needs: detect-infra
     if: needs.detect-infra.outputs.has_infra == 'true'
-    uses: helix-infrastructure/helix-ci-workflows/.github/workflows/lint.yml@v0.1.4
+    uses: helix-infrastructure/helix-ci-workflows/.github/workflows/lint.yml@v0.2.0
     with:
       working_directory: infra
     secrets:
@@ -43,7 +43,7 @@ jobs:
 
   build:
     name: build
-    uses: helix-infrastructure/helix-ci-workflows/.github/workflows/build.yml@v0.1.4
+    uses: helix-infrastructure/helix-ci-workflows/.github/workflows/build.yml@v0.2.0
     with:
       build_type: docker
       # Confirm the real repo name with `aws ecr describe-repositories` before
@@ -55,7 +55,7 @@ jobs:
 
   test:
     name: test
-    uses: helix-infrastructure/helix-ci-workflows/.github/workflows/test.yml@v0.1.4
+    uses: helix-infrastructure/helix-ci-workflows/.github/workflows/test.yml@v0.2.0
     with:
       setup_command: npm ci
       test_command: npm test
@@ -65,7 +65,7 @@ jobs:
     permissions:
       contents: read
       pull-requests: write # gitleaks-action posts PR comments
-    uses: helix-infrastructure/helix-ci-workflows/.github/workflows/security.yml@v0.1.4
+    uses: helix-infrastructure/helix-ci-workflows/.github/workflows/security.yml@v0.2.0
     with:
       scan_type: app
 
