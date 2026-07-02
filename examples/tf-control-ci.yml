@@ -52,6 +52,13 @@ jobs:
   plan:
     if: github.event_name == 'push'
     environment: test
+    # plan.yml's own job needs id-token:write for AWS OIDC — a reusable
+    # workflow can only receive permissions its caller already has. Omitting
+    # this fails the entire file at startup (0 jobs), not just this job at
+    # runtime — this bit tf-control's real ci.yml for its first two weeks.
+    permissions:
+      id-token: write
+      contents: read
     uses: helix-infrastructure/helix-ci-workflows/.github/workflows/plan.yml@v0.2.2
     with:
       working_directory: tf-control-helix/aws-accounts/test/helix-status-test
@@ -65,6 +72,11 @@ jobs:
     if: github.event_name == 'push'
     needs: plan
     environment: test
+    # deploy.yml's own job needs id-token:write (AWS OIDC) and contents:write
+    # (the deployed-{environment} tag push) — same reasoning as plan above.
+    permissions:
+      id-token: write
+      contents: write
     uses: helix-infrastructure/helix-ci-workflows/.github/workflows/deploy.yml@v0.2.2
     with:
       working_directory: tf-control-helix/aws-accounts/test/helix-status-test
@@ -77,6 +89,12 @@ jobs:
   verify:
     if: github.event_name == 'push'
     needs: deploy
+    # verify.yml requests id-token:write unconditionally, used only by its
+    # optional terraform_output_key fallback — but the schema check happens
+    # regardless of which runtime path is actually taken.
+    permissions:
+      id-token: write
+      contents: read
     uses: helix-infrastructure/helix-ci-workflows/.github/workflows/verify.yml@v0.2.2
     with:
       health_check_url: https://internal.status.helix-infrastructure.co.uk
