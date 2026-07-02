@@ -91,7 +91,7 @@ on:
 jobs:
   lint-tf:
     if: github.event_name == 'pull_request'
-    uses: helix-infrastructure/helix-ci-workflows/.github/workflows/lint-tf.yml@v1.0.0
+    uses: helix-infrastructure/helix-ci-workflows/.github/workflows/lint-tf.yml@v1.0.1
     with:
       working_directory: tf-control-helix/aws-accounts/test/helix-status-test
     secrets:
@@ -102,7 +102,7 @@ jobs:
     permissions:
       contents: read
       pull-requests: write # gitleaks-action posts PR comments
-    uses: helix-infrastructure/helix-ci-workflows/.github/workflows/security.yml@v1.0.0
+    uses: helix-infrastructure/helix-ci-workflows/.github/workflows/security.yml@v1.0.1
     with:
       scan_type: terraform
       working_directory: tf-control-helix/aws-accounts/test/helix-status-test
@@ -132,7 +132,7 @@ jobs:
     permissions:
       id-token: write
       contents: read
-    uses: helix-infrastructure/helix-ci-workflows/.github/workflows/plan-tf.yml@v1.0.0
+    uses: helix-infrastructure/helix-ci-workflows/.github/workflows/plan-tf.yml@v1.0.1
     with:
       working_directory: ${{ needs.resolve.outputs.working_directory }}
       environment: test
@@ -146,7 +146,7 @@ jobs:
     permissions:
       id-token: write
       contents: write
-    uses: helix-infrastructure/helix-ci-workflows/.github/workflows/apply-tf.yml@v1.0.0
+    uses: helix-infrastructure/helix-ci-workflows/.github/workflows/apply-tf.yml@v1.0.1
     with:
       working_directory: ${{ needs.resolve.outputs.working_directory }}
       environment: test
@@ -163,7 +163,7 @@ jobs:
     permissions:
       id-token: write
       contents: read
-    uses: helix-infrastructure/helix-ci-workflows/.github/workflows/test-endpoint.yml@v1.0.0
+    uses: helix-infrastructure/helix-ci-workflows/.github/workflows/test-endpoint.yml@v1.0.1
     with:
       health_check_url: ${{ needs.resolve.outputs.health_check_url }}
 
@@ -172,7 +172,7 @@ jobs:
     # not itself a failure — fall back to apply-tf's result in that case.
     if: always() && needs.resolve.result == 'success'
     needs: [resolve, apply-tf, test-endpoint]
-    uses: helix-infrastructure/helix-ci-workflows/.github/workflows/notify.yml@v1.0.0
+    uses: helix-infrastructure/helix-ci-workflows/.github/workflows/notify.yml@v1.0.1
     with:
       status: ${{ ((needs.test-endpoint.result == 'skipped' && needs.apply-tf.result == 'success') || needs.test-endpoint.result == 'success') && 'success' || 'failure' }}
       environment: test
@@ -182,7 +182,7 @@ jobs:
 
   rollback:
     if: github.event_name == 'workflow_dispatch' && inputs.rollback_environment != ''
-    uses: helix-infrastructure/helix-ci-workflows/.github/workflows/rollback.yml@v1.0.0
+    uses: helix-infrastructure/helix-ci-workflows/.github/workflows/rollback.yml@v1.0.1
     with:
       environment: ${{ inputs.rollback_environment }}
     secrets:
