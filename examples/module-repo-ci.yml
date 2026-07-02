@@ -11,7 +11,7 @@ on:
 
 jobs:
   lint:
-    uses: helix-infrastructure/helix-ci-workflows/.github/workflows/lint.yml@v0.2.1
+    uses: helix-infrastructure/helix-ci-workflows/.github/workflows/lint.yml@v0.2.2
     with:
       working_directory: .
 
@@ -19,7 +19,7 @@ jobs:
     permissions:
       contents: read
       pull-requests: write # gitleaks-action posts PR comments — required even though security.yml needs no AWS creds
-    uses: helix-infrastructure/helix-ci-workflows/.github/workflows/security.yml@v0.2.1
+    uses: helix-infrastructure/helix-ci-workflows/.github/workflows/security.yml@v0.2.2
     with:
       scan_type: terraform
       working_directory: .
