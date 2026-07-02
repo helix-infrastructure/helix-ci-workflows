@@ -1,4 +1,4 @@
-name: Verify
+name: Test Endpoint
 
 on:
   workflow_call:

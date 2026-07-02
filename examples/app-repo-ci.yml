@@ -31,19 +31,22 @@ jobs:
   # Job is always present in the graph (required-check name stays stable) but
   # *skips* via if: when there's no infra/ to lint — an omitted job would leave
   # a required check pending forever instead of reporting skipped/green.
-  lint:
-    name: lint
+  lint-tf:
+    name: lint-tf
     needs: detect-infra
     if: needs.detect-infra.outputs.has_infra == 'true'
-    uses: helix-infrastructure/helix-ci-workflows/.github/workflows/lint.yml@v0.2.1
+    uses: helix-infrastructure/helix-ci-workflows/.github/workflows/lint-tf.yml@v1.0.0
     with:
       working_directory: infra
     secrets:
       TF_MODULE_READ_PAT: ${{ secrets.TF_MODULE_READ_PAT }}
 
-  build:
-    name: build
-    uses: helix-infrastructure/helix-ci-workflows/.github/workflows/build.yml@v0.2.1
+  build-app:
+    name: build-app
+    permissions:
+      id-token: write
+      contents: read
+    uses: helix-infrastructure/helix-ci-workflows/.github/workflows/build-app.yml@v1.0.0
     with:
       build_type: docker
       # Confirm the real repo name with `aws ecr describe-repositories` before
@@ -53,26 +56,26 @@ jobs:
     secrets:
       AWS_ROLE_ARN: ${{ secrets.AWS_ECR_PUSH_ROLE_ARN }}
 
-  test:
-    name: test
-    uses: helix-infrastructure/helix-ci-workflows/.github/workflows/test.yml@v0.2.1
+  test-app:
+    name: test-app
+    uses: helix-infrastructure/helix-ci-workflows/.github/workflows/test-app.yml@v1.0.0
     with:
       setup_command: npm ci
       test_command: npm test
 
-  security:
-    name: security
+  security-app:
+    name: security-app
     permissions:
       contents: read
       pull-requests: write # gitleaks-action posts PR comments
-    uses: helix-infrastructure/helix-ci-workflows/.github/workflows/security.yml@v0.2.1
+    uses: helix-infrastructure/helix-ci-workflows/.github/workflows/security.yml@v1.0.0
     with:
       scan_type: app
 
   bump-tf-control:
     name: bump-tf-control
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-    needs: [build, test, security]
+    needs: [build-app, test-app, security-app]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -81,7 +84,7 @@ jobs:
           token: ${{ secrets.HELIX_BOT_PAT }}
       - env:
           GH_TOKEN: ${{ secrets.HELIX_BOT_PAT }}
-          IMAGE_TAG: ${{ needs.build.outputs.image_tag }}
+          IMAGE_TAG: ${{ needs.build-app.outputs.image_tag }}
           GIT_AUTHOR_NAME: helix-ci-bot
           GIT_AUTHOR_EMAIL: ci@helix-infrastructure.co.uk
           GIT_COMMITTER_NAME: helix-ci-bot

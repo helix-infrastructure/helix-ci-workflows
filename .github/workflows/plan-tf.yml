@@ -1,13 +1,14 @@
-name: Deploy
+name: Plan (Terraform)
 
 on:
   workflow_call:
     inputs:
       working_directory:
+        description: "tf-control scaffold or common/ root to plan"
         type: string
         required: true
       environment:
-        description: "Must match the GitHub Environment name — its required-reviewer rule is the actual approval gate for this job"
+        description: "Must match the GitHub Environment name (sandbox|dev|test|prod|management) — this is what gates apply-tf.yml via required reviewers"
         type: string
         required: true
       aws_region:
@@ -18,26 +19,27 @@ on:
         default: "1.7.x"
     secrets:
       AWS_STATE_ROLE_ARN:
+        description: "Role in the management account — state bucket I/O"
         required: true
       AWS_DEPLOY_ROLE_ARN:
+        description: "Role in the target environment's account — resource provisioning"
         required: true
       TF_MODULE_READ_PAT:
-        description: "Read-only PAT for cloning private terraform-aws-* module repos. Required if the root being deployed sources any private module."
+        description: "Read-only PAT for cloning private terraform-aws-* module repos. Required if the root being planned sources any private module."
         required: false
     outputs:
-      deploy_status:
-        value: ${{ jobs.deploy.outputs.deploy_status }}
+      plan_exit_code:
+        value: ${{ jobs.plan.outputs.plan_exit_code }}
 
 jobs:
-  deploy:
-    name: deploy
+  plan:
+    name: plan
     runs-on: ubuntu-latest
-    environment: ${{ inputs.environment }}
     permissions:
       id-token: write
-      contents: write
+      contents: read
     outputs:
-      deploy_status: ${{ steps.apply.outcome }}
+      plan_exit_code: ${{ steps.plan.outcome }}
     defaults:
       run:
         working-directory: ${{ inputs.working_directory }}
@@ -48,13 +50,10 @@ jobs:
         with:
           terraform_version: ${{ inputs.terraform_version }}
 
-      # Calling job must `needs: plan` in the same workflow run so this artifact
-      # name (keyed by github.run_id) resolves — see examples/tf-control-ci.yml.
-      - uses: actions/download-artifact@v4
-        with:
-          name: tfplan-${{ inputs.environment }}-${{ github.run_id }}
-          path: ${{ inputs.working_directory }}
-
+      # Mirrors the local dev workflow exactly: backend.tf is hardcoded to profile
+      # "helix-management-bootstrap" for state I/O, versions.tf's provider reads
+      # var.aws_profile (e.g. "helix-test-bootstrap") for resources. Two roles,
+      # two named profiles, zero changes needed to any scaffold's .tf files.
       - name: Assume state role
         id: state-creds
         uses: aws-actions/configure-aws-credentials@v4
@@ -104,19 +103,17 @@ jobs:
       - name: terraform init
         run: terraform init -input=false
 
-      # Always applies the plan artifact from this run's plan job — never a fresh
-      # plan. This is what satisfies "no apply without a saved plan file".
-      - name: terraform apply
-        id: apply
-        run: terraform apply -input=false -auto-approve tfplan
+      - name: terraform plan
+        id: plan
+        run: terraform plan -out=tfplan -input=false -no-color
 
-      - name: Move deployed-${{ inputs.environment }} tag
-        if: steps.apply.outcome == 'success'
-        env:
-          GIT_AUTHOR_NAME: helix-ci-bot
-          GIT_AUTHOR_EMAIL: ci@helix-infrastructure.co.uk
-          GIT_COMMITTER_NAME: helix-ci-bot
-          GIT_COMMITTER_EMAIL: ci@helix-infrastructure.co.uk
-        run: |
-          git tag -f "deployed-${{ inputs.environment }}" "${{ github.sha }}"
-          git push -f origin "deployed-${{ inputs.environment }}"
+      - name: terraform show
+        run: terraform show -no-color tfplan | tee plan.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tfplan-${{ inputs.environment }}-${{ github.run_id }}
+          path: |
+            ${{ inputs.working_directory }}/tfplan
+            ${{ inputs.working_directory }}/plan.txt
+          retention-days: 7
