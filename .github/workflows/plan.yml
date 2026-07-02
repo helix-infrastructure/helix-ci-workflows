@@ -92,8 +92,12 @@ jobs:
 
       # GITHUB_TOKEN is scoped only to this repo — it can't clone sibling
       # private terraform-aws-* module repos that tf-control scaffolds compose.
+      #
+      # Unconditional, not `if: secrets.TF_MODULE_READ_PAT != ''` — the
+      # secrets context isn't permitted in step `if:` conditionals at all
+      # (a hard workflow-parse error: the whole run fails at startup with
+      # zero jobs created). Harmless when the secret isn't set.
       - name: Configure git for private module repos
-        if: secrets.TF_MODULE_READ_PAT != ''
         run: git config --global url."https://x-access-token:${{ secrets.TF_MODULE_READ_PAT }}@github.com/".insteadOf "https://github.com/"
 
       - name: terraform init
