@@ -14,7 +14,7 @@ on:
       terraform_version:
         description: "Terraform version to install"
         type: string
-        default: "1.7.x"
+        default: "1.10.x"
     secrets:
       TF_MODULE_READ_PAT:
         description: "Read-only PAT for cloning private terraform-aws-* module repos. Only needed if the root being linted sources private modules — module repos themselves don't."

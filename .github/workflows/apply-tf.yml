@@ -13,9 +13,10 @@ on:
       aws_region:
         type: string
         default: "eu-west-1"
+      # 1.10.x minimum, not 1.7.x — see plan-tf.yml for why (use_lockfile).
       terraform_version:
         type: string
-        default: "1.7.x"
+        default: "1.10.x"
     secrets:
       AWS_STATE_ROLE_ARN:
         required: true
