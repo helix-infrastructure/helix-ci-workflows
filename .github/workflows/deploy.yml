@@ -21,6 +21,9 @@ on:
         required: true
       AWS_DEPLOY_ROLE_ARN:
         required: true
+      TF_MODULE_READ_PAT:
+        description: "Read-only PAT for cloning private terraform-aws-* module repos. Required if the root being deployed sources any private module."
+        required: false
     outputs:
       deploy_status:
         value: ${{ jobs.deploy.outputs.deploy_status }}
@@ -87,6 +90,12 @@ jobs:
           aws configure set aws_access_key_id "$AWS_ACCESS_KEY_ID" --profile "helix-${{ inputs.environment }}-bootstrap"
           aws configure set aws_secret_access_key "$AWS_SECRET_ACCESS_KEY" --profile "helix-${{ inputs.environment }}-bootstrap"
           aws configure set aws_session_token "$AWS_SESSION_TOKEN" --profile "helix-${{ inputs.environment }}-bootstrap"
+
+      # GITHUB_TOKEN is scoped only to this repo — it can't clone sibling
+      # private terraform-aws-* module repos that tf-control scaffolds compose.
+      - name: Configure git for private module repos
+        if: secrets.TF_MODULE_READ_PAT != ''
+        run: git config --global url."https://x-access-token:${{ secrets.TF_MODULE_READ_PAT }}@github.com/".insteadOf "https://github.com/"
 
       - name: terraform init
         run: terraform init -input=false

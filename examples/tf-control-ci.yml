@@ -59,6 +59,7 @@ jobs:
     secrets:
       AWS_STATE_ROLE_ARN: ${{ secrets.AWS_STATE_ROLE_ARN }}
       AWS_DEPLOY_ROLE_ARN: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+      TF_MODULE_READ_PAT: ${{ secrets.TF_MODULE_READ_PAT }}
 
   deploy:
     if: github.event_name == 'push'
@@ -71,6 +72,7 @@ jobs:
     secrets:
       AWS_STATE_ROLE_ARN: ${{ secrets.AWS_STATE_ROLE_ARN }}
       AWS_DEPLOY_ROLE_ARN: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+      TF_MODULE_READ_PAT: ${{ secrets.TF_MODULE_READ_PAT }}
 
   verify:
     if: github.event_name == 'push'
