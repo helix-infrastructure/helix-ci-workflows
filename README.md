@@ -27,6 +27,7 @@ Versioned exactly like a Terraform module (see `helix-ai-context/teams/devops/co
 | `AWS_DEPLOY_ROLE_ARN` | `tf-control`, per-Environment secret | `plan.yml`, `deploy.yml` |
 | `GOOGLE_CHAT_WEBHOOK_URL` / `TEAMS_WEBHOOK_URL` | `tf-control`, repo or Environment secret | `notify.yml` (either or both — at least one) |
 | `HELIX_BOT_PAT` | org secret, fine-grained PAT, `pull-requests:write` on `tf-control` only | the bump-PR step in app repos' `ci.yml`, and `rollback.yml` |
+| `TF_MODULE_READ_PAT` | repo-level secret on any repo whose Terraform sources private `terraform-aws-*` modules (currently `tf-control`, `helix-status`), fine-grained PAT, `contents:read` on the module repos | `lint.yml`, `plan.yml`, `deploy.yml` — `GITHUB_TOKEN` is scoped only to the repo the workflow runs in, so it can't clone sibling private module repos. Set at org level with `admin:org` scope if you want one secret shared across repos instead of copying it per repo — the token I used to set this up only had `repo` scope, so it went in per-repo. |
 
 GitHub Environment names must match the `environment:` input passed to `plan.yml`/`deploy.yml` exactly (`sandbox`, `dev`, `test`, `prod`, `management`) — the IAM role trust policy's `sub` claim is scoped to `repo:helix-infrastructure/tf-control:environment:<name>`, and the Environment's required-reviewer protection rule is what actually gates `deploy.yml` (no custom approval logic in the workflow itself).
 

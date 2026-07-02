@@ -15,6 +15,10 @@ on:
         description: "Terraform version to install"
         type: string
         default: "1.7.x"
+    secrets:
+      TF_MODULE_READ_PAT:
+        description: "Read-only PAT for cloning private terraform-aws-* module repos. Only needed if the root being linted sources private modules — module repos themselves don't."
+        required: false
 
 jobs:
   lint:
@@ -37,8 +41,15 @@ jobs:
       - name: terraform fmt
         run: terraform fmt -check -recursive
 
-      # No AWS credentials anywhere in this job — -backend=false means init/validate
-      # never touch state, so lint is safe to run on PRs from forks.
+      # GITHUB_TOKEN is scoped only to this repo — it can't clone sibling
+      # private terraform-aws-* module repos, so module downloads below would
+      # fail with "could not read Username" without this. No AWS credentials
+      # anywhere in this job — -backend=false means init/validate never touch
+      # state, so lint is otherwise safe to run on PRs from forks.
+      - name: Configure git for private module repos
+        if: secrets.TF_MODULE_READ_PAT != ''
+        run: git config --global url."https://x-access-token:${{ secrets.TF_MODULE_READ_PAT }}@github.com/".insteadOf "https://github.com/"
+
       - name: terraform init
         run: terraform init -backend=false -input=false
 
