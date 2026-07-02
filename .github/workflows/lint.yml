@@ -46,8 +46,14 @@ jobs:
       # fail with "could not read Username" without this. No AWS credentials
       # anywhere in this job — -backend=false means init/validate never touch
       # state, so lint is otherwise safe to run on PRs from forks.
+      #
+      # Unconditional, not `if: secrets.TF_MODULE_READ_PAT != ''` — the
+      # secrets context isn't permitted in step `if:` conditionals at all
+      # (a hard workflow-parse error: the whole run fails at startup with
+      # zero jobs created, not just this step). Harmless when the secret
+      # isn't set: git config gets an empty-token URL rewrite that's simply
+      # never exercised by a root with no private module sources.
       - name: Configure git for private module repos
-        if: secrets.TF_MODULE_READ_PAT != ''
         run: git config --global url."https://x-access-token:${{ secrets.TF_MODULE_READ_PAT }}@github.com/".insteadOf "https://github.com/"
 
       - name: terraform init
