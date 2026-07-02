@@ -35,7 +35,7 @@ on:
 jobs:
   lint:
     if: github.event_name == 'pull_request'
-    uses: helix-infrastructure/helix-ci-workflows/.github/workflows/lint.yml@v0.2.1
+    uses: helix-infrastructure/helix-ci-workflows/.github/workflows/lint.yml@v0.2.2
     with:
       working_directory: tf-control-helix/aws-accounts/test/helix-status-test
 
@@ -44,7 +44,7 @@ jobs:
     permissions:
       contents: read
       pull-requests: write # gitleaks-action posts PR comments
-    uses: helix-infrastructure/helix-ci-workflows/.github/workflows/security.yml@v0.2.1
+    uses: helix-infrastructure/helix-ci-workflows/.github/workflows/security.yml@v0.2.2
     with:
       scan_type: terraform
       working_directory: tf-control-helix/aws-accounts/test/helix-status-test
@@ -52,7 +52,14 @@ jobs:
   plan:
     if: github.event_name == 'push'
     environment: test
-    uses: helix-infrastructure/helix-ci-workflows/.github/workflows/plan.yml@v0.2.1
+    # plan.yml's own job needs id-token:write for AWS OIDC — a reusable
+    # workflow can only receive permissions its caller already has. Omitting
+    # this fails the entire file at startup (0 jobs), not just this job at
+    # runtime — this bit tf-control's real ci.yml for its first two weeks.
+    permissions:
+      id-token: write
+      contents: read
+    uses: helix-infrastructure/helix-ci-workflows/.github/workflows/plan.yml@v0.2.2
     with:
       working_directory: tf-control-helix/aws-accounts/test/helix-status-test
       environment: test
@@ -65,7 +72,12 @@ jobs:
     if: github.event_name == 'push'
     needs: plan
     environment: test
-    uses: helix-infrastructure/helix-ci-workflows/.github/workflows/deploy.yml@v0.2.1
+    # deploy.yml's own job needs id-token:write (AWS OIDC) and contents:write
+    # (the deployed-{environment} tag push) — same reasoning as plan above.
+    permissions:
+      id-token: write
+      contents: write
+    uses: helix-infrastructure/helix-ci-workflows/.github/workflows/deploy.yml@v0.2.2
     with:
       working_directory: tf-control-helix/aws-accounts/test/helix-status-test
       environment: test
@@ -77,14 +89,20 @@ jobs:
   verify:
     if: github.event_name == 'push'
     needs: deploy
-    uses: helix-infrastructure/helix-ci-workflows/.github/workflows/verify.yml@v0.2.1
+    # verify.yml requests id-token:write unconditionally, used only by its
+    # optional terraform_output_key fallback — but the schema check happens
+    # regardless of which runtime path is actually taken.
+    permissions:
+      id-token: write
+      contents: read
+    uses: helix-infrastructure/helix-ci-workflows/.github/workflows/verify.yml@v0.2.2
     with:
       health_check_url: https://internal.status.helix-infrastructure.co.uk
 
   notify:
     if: always() && github.event_name == 'push'
     needs: [deploy, verify]
-    uses: helix-infrastructure/helix-ci-workflows/.github/workflows/notify.yml@v0.2.1
+    uses: helix-infrastructure/helix-ci-workflows/.github/workflows/notify.yml@v0.2.2
     with:
       status: ${{ needs.verify.result == 'success' && 'success' || 'failure' }}
       environment: test
@@ -94,7 +112,7 @@ jobs:
 
   rollback:
     if: github.event_name == 'workflow_dispatch' && inputs.rollback_environment != ''
-    uses: helix-infrastructure/helix-ci-workflows/.github/workflows/rollback.yml@v0.2.1
+    uses: helix-infrastructure/helix-ci-workflows/.github/workflows/rollback.yml@v0.2.2
     with:
       environment: ${{ inputs.rollback_environment }}
     secrets:
