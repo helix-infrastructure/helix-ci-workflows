@@ -11,6 +11,13 @@ on:
         description: "Fallback: resolve the URL via `terraform output -raw <key>` if no literal URL is given"
         type: string
         default: ""
+      ecs_cluster:
+        description: "ECS cluster name — set together with ecs_service to check deployment rollout via the AWS API instead of an HTTP request. Use this when the endpoint isn't reachable from GitHub-hosted runners (e.g. an ALB locked to a single allowed_cidr_blocks entry) — whitelisting Actions' IP ranges isn't practical, they're large and rotate."
+        type: string
+        default: ""
+      ecs_service:
+        type: string
+        default: ""
       working_directory:
         type: string
         default: "."
@@ -30,6 +37,9 @@ on:
       AWS_STATE_ROLE_ARN:
         description: "Read-only state access, only needed for the terraform_output_key fallback"
         required: false
+      AWS_DEPLOY_ROLE_ARN:
+        description: "Only needed for the ecs_cluster/ecs_service check — the ECS service lives in the target environment's account"
+        required: false
 
 jobs:
   verify:
@@ -43,14 +53,14 @@ jobs:
         working-directory: ${{ inputs.working_directory }}
     steps:
       - uses: actions/checkout@v4
-        if: inputs.health_check_url == '' && inputs.terraform_output_key != ''
+        if: inputs.ecs_cluster == '' && inputs.health_check_url == '' && inputs.terraform_output_key != ''
 
       - uses: hashicorp/setup-terraform@v3
-        if: inputs.health_check_url == '' && inputs.terraform_output_key != ''
+        if: inputs.ecs_cluster == '' && inputs.health_check_url == '' && inputs.terraform_output_key != ''
 
       - name: Assume state role
         id: state-creds
-        if: inputs.health_check_url == '' && inputs.terraform_output_key != ''
+        if: inputs.ecs_cluster == '' && inputs.health_check_url == '' && inputs.terraform_output_key != ''
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ secrets.AWS_STATE_ROLE_ARN }}
@@ -59,7 +69,7 @@ jobs:
 
       - name: Resolve URL from Terraform output
         id: resolve
-        if: inputs.health_check_url == '' && inputs.terraform_output_key != ''
+        if: inputs.ecs_cluster == '' && inputs.health_check_url == '' && inputs.terraform_output_key != ''
         env:
           AWS_ACCESS_KEY_ID: ${{ steps.state-creds.outputs.aws-access-key-id }}
           AWS_SECRET_ACCESS_KEY: ${{ steps.state-creds.outputs.aws-secret-access-key }}
@@ -69,6 +79,7 @@ jobs:
           echo "url=$(terraform output -raw "${{ inputs.terraform_output_key }}")" >> "$GITHUB_OUTPUT"
 
       - name: Health check
+        if: inputs.ecs_cluster == ''
         env:
           URL: ${{ inputs.health_check_url || steps.resolve.outputs.url }}
         run: |
@@ -82,4 +93,35 @@ jobs:
             sleep 10
           done
           echo "Failed: $URL did not return ${{ inputs.expected_status }} after ${{ inputs.retries }} attempts"
+          exit 1
+
+      - name: Assume deploy role
+        if: inputs.ecs_cluster != ''
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ inputs.aws_region }}
+
+      # Checks the primary deployment's rolloutState rather than task/service
+      # status directly — COMPLETED is ECS's own signal that the new task
+      # definition is running at desiredCount with old tasks drained, which
+      # is exactly "did the thing we just deployed actually roll out".
+      - name: ECS deployment health check
+        if: inputs.ecs_cluster != ''
+        run: |
+          for i in $(seq 1 ${{ inputs.retries }}); do
+            STATE=$(aws ecs describe-services \
+              --cluster "${{ inputs.ecs_cluster }}" \
+              --services "${{ inputs.ecs_service }}" \
+              --region "${{ inputs.aws_region }}" \
+              --query "services[0].deployments[?status=='PRIMARY'].rolloutState | [0]" \
+              --output text 2>/dev/null || echo "ERROR")
+            if [ "$STATE" == "COMPLETED" ]; then
+              echo "Healthy: ${{ inputs.ecs_service }} rollout is COMPLETED"
+              exit 0
+            fi
+            echo "Attempt $i/${{ inputs.retries }}: rolloutState=$STATE, retrying in 10s..."
+            sleep 10
+          done
+          echo "Failed: ${{ inputs.ecs_service }} did not reach COMPLETED after ${{ inputs.retries }} attempts"
           exit 1
