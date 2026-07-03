@@ -7,7 +7,7 @@ on:
         type: string
         required: true
       environment:
-        description: "Must match the GitHub Environment name — its required-reviewer rule is the actual approval gate for this job"
+        description: "sandbox|dev|test|prod|management — used for profile naming and the deployed-{environment} tag, not a GitHub Environment (see below)"
         type: string
         required: true
       aws_region:
@@ -33,7 +33,14 @@ jobs:
   deploy:
     name: deploy
     runs-on: ubuntu-latest
-    environment: ${{ inputs.environment }}
+    # No job-level `environment:` — GitHub Environment protection rules
+    # (required reviewers) aren't available on private repos on this org's
+    # Free tier, and setting one here swaps the OIDC sub claim from
+    # `ref:refs/heads/main` to `environment:${{ inputs.environment }}`,
+    # which the deploy-role trust policies don't allow (AssumeRoleWithWebIdentity
+    # denied). Every other job in this repo was already fixed this way in
+    # PR #12 ("Scope OIDC trust policies to ref:refs/heads/main, not
+    # environment:X") — this job was missed.
     permissions:
       id-token: write
       contents: write
