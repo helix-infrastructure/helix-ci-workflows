@@ -108,9 +108,20 @@ jobs:
       - name: terraform init
         run: terraform init -input=false
 
+      # environment/aws_profile are required variables (no default) on every
+      # scaffold, normally supplied by a local terraform.tfvars — which is
+      # gitignored repo-wide (can carry account-scoped values), so a fresh
+      # CI checkout never has one. Supplying both here via -var, derived
+      # from the same environment input every scaffold already takes,
+      # matches the helix-{env}-bootstrap profile-naming convention
+      # documented in terraform.md — works for any scaffold, not just this
+      # one, and needs no per-scaffold CI config.
       - name: terraform plan
         id: plan
-        run: terraform plan -out=tfplan -input=false -no-color
+        run: |
+          terraform plan -out=tfplan -input=false -no-color \
+            -var="environment=${{ inputs.environment }}" \
+            -var="aws_profile=helix-${{ inputs.environment }}-bootstrap"
 
       - name: terraform show
         run: terraform show -no-color tfplan | tee plan.txt
